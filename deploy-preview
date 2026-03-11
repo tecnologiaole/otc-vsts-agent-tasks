@@ -1,0 +1,168 @@
+#!/bin/bash
+
+source <(otc-task-include lib/filesystem.sh)
+source <(otc-task-include lib/vsts.sh)
+source <(otc-task-include lib/dotnet.sh)
+source <(otc-task-include lib/docker.sh)
+source <(otc-task-include lib/helm.sh)
+source <(otc-task-include lib/dotnet-docker-deploy-preview.sh)
+source <(otc-task-include lib/git.sh)
+source <(otc-task-include lib/assert.sh)
+source <(otc-task-include lib/console.sh)
+source <(otc-task-include lib/vsts-pr-statuses.sh)
+
+ORGANIZATION="oleconsignado"
+
+# Param pullrequest_id
+# Param commit_id
+# Param namespace
+# Param release_name
+# Required environment variables:
+#   - SYSTEM_PULLREQUEST_SOURCEREPOSITORYURI
+function publish-deploy-link-on-pr-feed
+{
+	local pullrequest_id=$1
+	local commit_id=$2
+	local namespace=$3
+	local release_name=$4
+
+	assert-not-empty pullrequest_id
+	assert-not-empty commit_id
+	assert-not-empty namespace
+	assert-not-empty release_name
+	assert-not-empty SYSTEM_PULLREQUEST_SOURCEREPOSITORYURI
+
+	local commit_short=$(echo $commit_id | egrep -o '^[0-9a-f]{8}')
+	local preview_url="http://$(kubectl -n $namespace get ingress -l release=$release_name -ojson | \
+		jq -r '.items[].spec.rules[].host')/"
+
+	local comment_text="Foi publicado uma prévia da aplicação no endereço [$preview_url]($preview_url). \
+A versão publicada corresponde ao commit \
+[$commit_short]($SYSTEM_PULLREQUEST_SOURCEREPOSITORYURI/commit/$commit_id) \
+e ela estará disponível enquanto este *Pull Request* estiver aberto."
+	local comment_id=$(vsts-comment-pull-request $pullrequest_id "$comment_text")
+	vsts-pull-request-comment-change-status $pullrequest_id $comment_id 4 # 4 = closed
+}
+
+# Param namespace
+# Param configuration
+# Param base_dir (OPTIONAL - default "$BUILD_SOURCESDIRECTORY/Source")
+# Param artifact_suffix (OPTIONAL) - valid only for no PR scenario
+# Param custom_values (OPTIONAL) - custom helm values file (path relative to helm_dir)
+# Required environment variables:
+#   - BUILD_REASON
+#   - BUILD_BUILDID
+#   - BUILD_SOURCESDIRECTORY
+#   - Required if "$BUILD_REASON" = "PullRequest"
+#     - SYSTEM_PULLREQUEST_PULLREQUESTID
+#     - SYSTEM_PULLREQUEST_SOURCECOMMITID
+function main
+{
+	local namespace=$1
+	local configuration=$2
+	local base_dir="$3" # Optional
+	local artifact_suffix="$4" # Optional (only for no PR scenario)
+	local custom_values="$5" # Optional
+
+	if ! [ -z "$custom_values" ]
+	then
+		echo "Using '$custom_values' as helm values." >&2
+	fi		
+
+	if [ -z "$base_dir" ]
+	then
+		base_dir="$BUILD_SOURCESDIRECTORY/Source"
+	fi
+
+	assert-not-empty namespace
+	assert-not-empty configuration
+	assert-not-empty BUILD_REASON
+	assert-not-empty BUILD_BUILDID
+	assert-not-empty BUILD_SOURCESDIRECTORY
+
+	local is_pullrequest=false
+	local pullrequest_id=''
+	
+
+	if [ "$BUILD_REASON" = "PullRequest" ]
+	then
+		assert-not-empty SYSTEM_PULLREQUEST_SOURCECOMMITID
+		assert-not-empty SYSTEM_PULLREQUEST_PULLREQUESTID
+		is_pullrequest=true
+		pullrequest_id=$SYSTEM_PULLREQUEST_PULLREQUESTID
+	fi
+
+	
+	local tag=''
+	local deploy_status='pending'
+	
+	if $is_pullrequest
+	then
+		pullrequest-set-deploy-preview-status \
+			"$pullrequest_id" \
+			"$deploy_status"		
+		artifact_suffix="-eph-pr$pullrequest_id"
+		tag="$(echo $SYSTEM_PULLREQUEST_SOURCECOMMITID | \
+			egrep -o '^[0-9a-f]{8}')-$BUILD_BUILDID"
+	else
+		tag="v$BUILD_BUILDID"
+		assert-success prepare-local-repo-for-changes
+	fi
+
+	local deployed_releases_list=$(mktemp -t "deployed-release-$BUILD_BUILDID-XXXXXXXX")
+	deploy_status='failed'
+
+	if dotnet-docker-deploy-preview \
+		"$base_dir" "$configuration" "$tag" "$namespace" \
+		"$artifact_suffix" "$custom_values" > $deployed_releases_list
+	then
+		deploy_status='succeeded'
+
+		if $is_pullrequest
+		then
+			for release_name in $(cat "$deployed_releases_list")
+			do		
+				publish-deploy-link-on-pr-feed \
+					"$pullrequest_id" \
+					"$SYSTEM_PULLREQUEST_SOURCECOMMITID" \
+					"$namespace" \
+					"$release_name"
+			done
+
+			rm "$deployed_releases_list"
+		else
+			assert-success commit-changes-and-tag "$tag"
+		fi
+	fi
+
+	if $is_pullrequest
+	then
+		# push deploy status to pr
+		assert-success pullrequest-set-deploy-preview-status \
+			"$pullrequest_id" \
+			"$deploy_status"
+
+	fi
+
+	if [ "$deploy_status" != "succeeded" ]
+	then
+		# finalize task will look for this file in order to determine if 
+		# deploy preview failed in a regurlar way (not crashed)
+		touch deploy-preview-regular-fail 
+
+		red "--------------------------------------------------------------------------------------------" >&2
+		red "A tarefa deploy-preview falhou. É provável que a falha tenha sido causada por alguma questão " >&2
+		red "introduzida no novo código, ou há um problema no ambiente (provavelmente temporário)." >&2
+		red "As mensagens no log (logo acima), costumam expor, as vezes de forma clara, a causa da falha. " >&2
+		red "--------------------------------------------------------------------------------------------" >&2
+
+		if ! $is_pullrequest
+		then
+			# Fail pipeline only if not PR build, for PR scenarios
+			# deploy_preview fail will be set as PR status
+			return 101
+		fi
+	fi	
+}
+
+main "$@"
