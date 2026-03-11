@@ -17,7 +17,7 @@ function docker-build
 	directory-exists "$image_contents_dir" || return $DOCKER_BUILD_IMAGE_CONTENTS_DIR_NOT_FOUND
 	assert-not-empty image_full_name_and_tag
 
-	echo "Building docker image $image_full_name_and_tag ..."
+	echo "1 - Building docker image $image_full_name_and_tag ..."
 	docker build "$image_contents_dir/." -t $image_full_name_and_tag
 }
 
