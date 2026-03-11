@@ -1,18 +1,20 @@
-#!/bin/bash 
+#!/bin/bash
 
-set -e
+source <(otc-task-include lib/assert.sh)
+source <(otc-task-include lib/console.sh)
+source <(otc-task-include lib/filesystem.sh)
+source <(otc-task-include lib/sonar.sh)
+source <(otc-task-include lib/vsts.sh)
+source <(otc-task-include lib/vsts-pr-statuses.sh)
 
-EXIT_CODE=0
-SONARSCANNER_END_ARGS="/d:sonar.login=$SONARQUBE_USERKEY"
-export MSYS2_ARG_CONV_EXCL="*"
-dotnet sonarscanner end $SONARSCANNER_END_ARGS | tee sonarscanner-end-output
-SONARSCANNER_END_EXIT_CODE=${PIPESTATUS[0]}
+assert-not-empty BUILD_REASON
+assert-not-empty BUILD_SOURCESDIRECTORY
+assert-not-empty COMMON_TESTRESULTSDIRECTORY
 
-if [ $SONARSCANNER_END_EXIT_CODE -ne 0 ]
+if [ "$BUILD_REASON" = "PullRequest" ]
 then
-	EXIT_CODE=$SONARSCANNER_END_EXIT_CODE
+	assert-not-empty SYSTEM_PULLREQUEST_PULLREQUESTID
+	pullrequest-set-quality-gate-status $SYSTEM_PULLREQUEST_PULLREQUESTID "pending"
 fi
 
-unset MSYS2_ARG_CONV_EXCL
-
-exit $EXIT_CODE
+sonar-scanner-begin "${BUILD_SOURCESDIRECTORY}/Source" "$COMMON_TESTRESULTSDIRECTORY"

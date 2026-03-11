@@ -1,19 +1,20 @@
 #!/bin/bash
 
-set -e
-for TEST_PROJ in $(find ./Source -name *.csproj | egrep '.*[Tt]ests?\.csproj$')
-do
-  TEST_PROJ_BIN_DIR=$(dirname $TEST_PROJ)/bin
-  PROJECT_NAME=$(echo $TEST_PROJ | egrep -o '[^/]+.csproj$' | sed s/\.csproj//)
-  TEST_DLL_FILENAME=$PROJECT_NAME.dll
-  TEST_DLL_FULLPATH=$(find $TEST_PROJ_BIN_DIR -name $TEST_DLL_FILENAME)
-  echo "Testing '$PROJECT_NAME' ..."
-  /root/.dotnet/tools/coverlet "$TEST_DLL_FULLPATH" \
-    --format "opencover" \
-  	--output "$COMMON_TESTRESULTSDIRECTORY/$PROJECT_NAME.opencover.xml" \
-  	--target "dotnet" \
-  	--targetargs "test $TEST_PROJ --no-build"
-# https://github.com/tonerdo/coverlet#excluding-from-coverage
-#  	--exclude "[*Adapter]*" \
-#  	--exclude "[*WebApi]*"
-done
+source <(otc-task-include lib/git.sh)
+source <(otc-task-include lib/assert.sh)
+source <(otc-task-include lib/vsts.sh)
+source <(otc-task-include lib/console.sh)
+#source <(otc-task-include lib/azure-pipelines-yaml-protection.sh)
+#source <(otc-task-include lib/vsts-pr-statuses.sh)
+source <(otc-task-include lib/vsts-pr.sh)
+
+#pullrequest_id="$1"
+#assert-not-empty pullrequest_id
+#pullrequest-set-size-status "$pullrequest_id" "notSet"
+#pullrequest-set-quality-gate-status "$pullrequest_id" "notSet"
+#pullrequest-set-deploy-preview-status "$pullrequest_id" "notSet"
+
+#count-changed-lines dev ":*.cs" ":(exclude)*Tests/*"
+
+
+"$@"

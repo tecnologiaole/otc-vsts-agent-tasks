@@ -1,40 +1,18 @@
-#!/bin/bash
+#!/bin/bash 
 
-source <(otc-task-include lib/assert.sh)
-source <(otc-task-include lib/vsts.sh)
-source <(otc-task-include lib/console.sh)
-source <(otc-task-include lib/sonar.sh)
-source <(otc-task-include lib/vsts-pr-statuses.sh)
+set -e
 
-SONARSCANNER_END_OUTPUT_FILE='sonarscanner-end-output'
+EXIT_CODE=0
+SONARSCANNER_END_ARGS="/d:sonar.login=$SONARQUBE_USERKEY"
+export MSYS2_ARG_CONV_EXCL="*"
+dotnet sonarscanner end $SONARSCANNER_END_ARGS | tee sonarscanner-end-output
+SONARSCANNER_END_EXIT_CODE=${PIPESTATUS[0]}
 
-function main
-{
-	local pullrequest_id=$SYSTEM_PULLREQUEST_PULLREQUESTID
-	assert-not-empty pullrequest_id
-	local analysis_report_url_file=$(mktemp -t \
-		"pr-sonar-report-url-${pullrequest_id}-XXXXXXXX")
-	
-	if sonar-analysis-validation $pullrequest_id > $analysis_report_url_file
-	then
-		pullrequest-set-quality-gate-status \
-			"$pullrequest_id" \
-			"succeeded" \
-			"$(cat $analysis_report_url_file)"
+if [ $SONARSCANNER_END_EXIT_CODE -ne 0 ]
+then
+	EXIT_CODE=$SONARSCANNER_END_EXIT_CODE
+fi
 
-	elif [ "$?" -eq "$SONAR_ANALYSIS_VALIDATION_FAILED" ]
-	then
-		pullrequest-set-quality-gate-status \
-			"$pullrequest_id" \
-			"failed" \
-			"$(cat $analysis_report_url_file)"
-	else
-		local error_code=$?
-		red "ERROR: Sonar analysis validation returned $error_code" >&2
-		return $error_code # will exit with error code
-	fi
+unset MSYS2_ARG_CONV_EXCL
 
-	rm -f $analysis_report_url_file > /dev/null 2>&1
-}
-
-main $@
+exit $EXIT_CODE
