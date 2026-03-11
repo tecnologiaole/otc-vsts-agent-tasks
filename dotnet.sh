@@ -57,8 +57,8 @@ function dotnet-docker-deploy-preview
 			if [ -f "$project_dir/Dockerfile" ]
 			then
 				echo "found!" >&2
-				echo "Copying artifacts from '$project_dir' to '$build_output_dir'" >&2
-				rsync -rp --exclude=.git "$project_dir/." "$build_output_dir" >&2
+				echo "Copiando artefatos de '$project_dir' para '$build_output_dir'" >&2
+				rsync -rpv -l --exclude=.git "$project_dir/." "$build_output_dir" >&2
 			else
 				echo "NOT found!" >&2
 				red "Nothing to publish." >&2
